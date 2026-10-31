@@ -7,12 +7,13 @@
 var SC_SECS = 2;
 /** 選船彈窗的卡片（Tim 2026-10-18「選船介面可以給船分類…不用載入所有船隻資訊 而是只載必要資訊」）：開戰那一刻量（還沒被打），admin.py shipcheck 寫進 config/ship_cards.json、建置時內嵌 ⇒ 主選單不用解碼船就有。
  *  tons ＝ 設計水線的排水量（T.disp）；len ＝ 水線長（公尺）；guns ＝ 砲（含迴旋砲、追擊砲）門數；volley ＝ 全部的砲各打一發的彈重（公斤，砲種表 shot）；
- *  drive ＝ 額外動力（31_drive.js D.kind：steam／oar／magic；沒有 ＝ sail）；sails ＝ 作品的帆（不算陣營旗）；crew ＝ 開戰時的人數。 */
+ *  drive ＝ 額外動力（31_drive.js D.kind：steam／oar／magic；沒有 ＝ sail）；sails ＝ 作品的帆（不算旗：陣營旗、國旗、信號旗 —— 同 10_ship.js s.flag，旗的推力面積是 0）；crew ＝ 開戰時的人數。
+ *  ⛔ 以前只扣陣營旗 ⇒ 只掛國旗的蒸汽船（定遠號、松島號）算成 1 面帆 ⇒ 選船卡、Blocksail 海圖照帆算順風／側順風／逆風三個航速（Tim 2026-10-31「沒有帆的蒸汽船 仍然會因為風向影響航速」）；遊戲裡 sailFrac 本來就是 0。 */
 function shipCard(sh) {
   var T = sh.T, D = sh.drive, vol = 0, by = {};
   sh.guns.forEach(function (g) { var G = GUNS[g.type] || {}; vol += +G.shot || 0; by[g.type] = (by[g.type] || 0) + 1; });
   return { tons: Math.round(T.disp || 0), len: +(((T.wl1 || T.hx1) - (T.wl0 || T.hx0)) * S).toFixed(1), guns: sh.guns.length, gunTypes: by, volley: Math.round(vol),
-    drive: D && D.kind ? D.kind : 'sail', sails: sh.sails.filter(function (s) { return !(s.meta && s.meta.team); }).length, crew: sh.crew.length };
+    drive: D && D.kind ? D.kind : 'sail', sails: sh.sails.filter(function (s) { return !s.flag && !(s.meta && s.meta.team); }).length, crew: sh.crew.length };
 }
 function shipCheck(id) {
   var R = { id: id, t: SC_SECS, issues: [], info: {} };
