@@ -379,22 +379,33 @@ function twbLines(T) {
   }
   TWB.rib = upload(TWB.rib, new Float32Array(RB), 6, [[0, 3, 0], [2, 3, 3]]);
 }
-/** 畫建築模式的預覽（60_render.js mainOpaque 最後：地形、樹、城之後）：房子的半透明實例、道路的半透明路面帶（都照深度：被前面的房子、山擋住）、線框（不看深度、穿地看得到）。
+/** 畫建築模式的預覽（60_render.js mainOpaque 最後：地形、樹、城之後）：房子的半透明實例、道路的半透明路面帶（都照深度：被前面的房子、山擋住）；線框另外在海之後畫（twbLineDraw）。
  *  ⛔ 要在地形、樹、城之後畫：關了深度測試的線不寫深度 ⇒ 畫在前面會被後畫的陸地整片蓋掉（2026-10-22 第一版放在船那一段後面，量到預覽框周圍 0 個綠像素）。 */
 function twbDraw() {
   if (!TWB.on && !tbiSelQ()) return;                                 // 建築模式關著 ⇒ 只有點建築的面板選著一棟時畫它的外框
   if (TWB.ghost) townGhostDraw(TWB.ghost);
-  var hasRib = TWB.rib && TWB.rib.n, hasLine = TWB.gl && TWB.gl.n; if (!hasRib && !hasLine) return;
+  if (!(TWB.rib && TWB.rib.n)) return;
+  twbLineProg();
+  var cf = gl.isEnabled(gl.CULL_FACE), bs = [gl.BLEND_SRC_RGB, gl.BLEND_DST_RGB, gl.BLEND_SRC_ALPHA, gl.BLEND_DST_ALPHA].map(function (k) { return gl.getParameter(k); });
+  gl.disable(gl.CULL_FACE); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendColor(0, 0, 0, TWB_RIB_A); gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA);
+  gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -4);           // 貼地往鏡頭推一點（同 63_towns.js 地面的帶子）
+  gl.bindVertexArray(TWB.rib.vao); gl.drawArrays(gl.TRIANGLES, 0, TWB.rib.n);
+  gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.BLEND); gl.blendFuncSeparate(bs[0], bs[1], bs[2], bs[3]); gl.depthMask(true); if (cf) gl.enable(gl.CULL_FACE);
+  gl.bindVertexArray(null);
+}
+/** 預覽帶、線框共用的著色器設定（P.tri、不打光、世界座標）。 */
+function twbLineProg() {
   gl.useProgram(P.tri.prog); setCommon(P.tri); gl.uniform1f(P.tri.u.uLit, 0); gl.uniform1f(P.tri.u.uGlow, 0); gl.vertexAttrib3f(1, 0, 1, 0); gl.vertexAttrib3f(3, 0, 0, 0);
   cutSet(P.tri, null); gl.uniformMatrix4fv(P.tri.u.uModel, false, CS_ID || (CS_ID = M4.ident()));
-  if (hasRib) {
-    var cf = gl.isEnabled(gl.CULL_FACE), bs = [gl.BLEND_SRC_RGB, gl.BLEND_DST_RGB, gl.BLEND_SRC_ALPHA, gl.BLEND_DST_ALPHA].map(function (k) { return gl.getParameter(k); });
-    gl.disable(gl.CULL_FACE); gl.depthMask(false); gl.enable(gl.BLEND); gl.blendColor(0, 0, 0, TWB_RIB_A); gl.blendFunc(gl.CONSTANT_ALPHA, gl.ONE_MINUS_CONSTANT_ALPHA);
-    gl.enable(gl.POLYGON_OFFSET_FILL); gl.polygonOffset(-1, -4);         // 貼地往鏡頭推一點（同 63_towns.js 地面的帶子）
-    gl.bindVertexArray(TWB.rib.vao); gl.drawArrays(gl.TRIANGLES, 0, TWB.rib.n);
-    gl.disable(gl.POLYGON_OFFSET_FILL); gl.disable(gl.BLEND); gl.blendFuncSeparate(bs[0], bs[1], bs[2], bs[3]); gl.depthMask(true); if (cf) gl.enable(gl.CULL_FACE);
-  }
-  if (hasLine) { gl.disable(gl.DEPTH_TEST); gl.bindVertexArray(TWB.gl.vao); gl.drawArrays(gl.LINES, 0, TWB.gl.n); gl.enable(gl.DEPTH_TEST); }
+}
+/** 畫線框（60_render.js mainWater 最後：海畫完之後）：試放的框、路線、點到的那一棟的黃框 —— 不看深度、穿地穿水都看得到。
+ *  ⛔ 要在海之後畫：線不寫深度 ⇒ 畫在海前面，海照後面的海床（或天空）深度通過、整片蓋過去 —— 水上建築的黃框在水面那一段不見（Tim 2026-10-31「選取框在水上的那一段會消失」，漁場水上版）。 */
+function twbLineDraw() {
+  if (!TWB.on && !tbiSelQ()) return;
+  if (!(TWB.gl && TWB.gl.n)) return;
+  twbLineProg();
+  var bl = gl.isEnabled(gl.BLEND);
+  gl.disable(gl.BLEND); gl.disable(gl.DEPTH_TEST); gl.bindVertexArray(TWB.gl.vao); gl.drawArrays(gl.LINES, 0, TWB.gl.n); gl.enable(gl.DEPTH_TEST); if (bl) gl.enable(gl.BLEND);
   gl.bindVertexArray(null);
 }
 /** 城名那一行（#twbTown，城鎮模式一直在）：城名、那座城的年份（另一個時空的加標示，括號裡是遊戲現在幾年）、人口 ——

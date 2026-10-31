@@ -1003,7 +1003,7 @@ function mainOpaque(fr) {
   bedDraw();                                                             // 陸地與海底（63_bed_gl.js；有海圖才有）
   treeDraw();                                                            // 島上的樹（63_trees.js）
   townDraw();                                                            // 城鎮（63_towns.js；有城才有）
-  twbDraw();                                                             // 城鎮建築模式的預覽（87_townbuild.js：半透明的房子與路面帶、線框；⛔ 要在地形、樹、城之後）
+  twbDraw();                                                             // 城鎮建築模式的預覽（87_townbuild.js：半透明的房子與路面帶；⛔ 要在地形、樹、城之後；線框在 mainWater 最後）
 }
 /** 主畫面的海：折射複製、海面、破洞底下的海、遠海、內陸水、陰影範圍的除錯線。 */
 function mainWater(fr) {
@@ -1045,6 +1045,7 @@ function mainWater(fr) {
   bedWaterDraw();                                                        // 內陸水：湖、河、瀑布的水幕（63_bed_gl.js；海圖塊有段 3 才有）
   shadowDebugFill(w, h);                                                 // 陰影範圍的除錯塗色＋地表上的邊框（同一個開關；下面 shadowDebugFill）
   shadowDebugDraw();                                                     // 陰影範圍的除錯線（Debug 模式才畫；下面 shadowDebugDraw）
+  twbLineDraw();                                                         // 城鎮建築模式的線框、點到的那一棟的黃框（87_townbuild.js；⛔ 要在海之後：線不寫深度，畫在前面會被海蓋掉）
 }
 /** 主畫面的半透明與最上面那幾層：白沫、艙內的水、玻璃、城裡的燈、粒子＋砲彈、3D 雨滴、雨。 */
 function mainOverlay(fr) {

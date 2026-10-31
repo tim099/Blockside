@@ -383,7 +383,7 @@ var TOWN_FULL = Q.get('townfull') === '1';                              // ?town
 var TOWN_DIFF_KEYS = ['walls', 'core', 'style', 'styles', 'ox', 'oy', 'kx', 'bank', 'tier', 'seed'];   // 這些變了 ⇒ 整座重來（建築模式不會改它們）；棧橋、碼頭照城區多了少了 ⇒ 照 id 比（townDiff）
 function townBoxAdd(b, c) { b[0] = Math.min(b[0], c[0]); b[1] = Math.min(b[1], c[1]); b[2] = Math.max(b[2], c[2]); b[3] = Math.max(b[3], c[3]); return b; }
 function townBoxHit(a, b) { return a[0] < b[2] && a[2] > b[0] && a[1] < b[3] && a[3] > b[1]; }
-/** 舊城 T0 ⇒ 新城 T1 改到哪裡：{ box（地面分區、實例、清樹，海域座標）, roads（路變了的外框；沒變 ⇒ null）, deck（棧橋、碼頭、樓梯變了）}；TOWN_DIFF_KEYS 變了 ⇒ null。
+/** 舊城 T0 ⇒ 新城 T1 改到哪裡：{ box（地面分區、實例、清樹，海域座標）, roads（路變了的外框；沒變 ⇒ null）, deck（棧橋、碼頭、樓梯、水上地塊變了）}；TOWN_DIFF_KEYS 變了 ⇒ null。
  *  同一個物件（城區多了少了：沒動到的那幾項是同一份）⇒ 不轉 JSON 直接算沒變（君士坦丁堡 7,856 塊地每次換區都要比）。 */
 function townDiff(T0, T1) {
   var a = T0.p, b = T1.p, E = T1.E, box = [1e9, 1e9, -1e9, -1e9], rb = null, deck = false;
@@ -406,7 +406,10 @@ function townDiff(T0, T1) {
     rb = rb || [1e9, 1e9, -1e9, -1e9];
     r.path.forEach(function (q) { var e = E(q); grow(box, e, r.w / 2 + 4); grow(rb, e, r.w / 2 + 6); });
   });
-  changed(a.lots, b.lots, function (l) { grow(box, E(l.at), Math.hypot(l.w, l.d)); if (l.use === 'plaza') { rb = rb || [1e9, 1e9, -1e9, -1e9]; grow(rb, E(l.at), Math.hypot(l.w, l.d)); } });
+  changed(a.lots, b.lots, function (l) {
+    grow(box, E(l.at), Math.hypot(l.w, l.d)); if (l.use === 'plaza') { rb = rb || [1e9, 1e9, -1e9, -1e9]; grow(rb, E(l.at), Math.hypot(l.w, l.d)); }
+    if (l.water) deck = true;                                           // 水上地塊（平台、樁、接縫木板在地面那一區畫）⇒ 那一區的清單照新的規劃重分（townDistBins）—— ⛔ 不分 ⇒ 建築模式剛蓋的漁場水上版只有模型、底下沒平台也沒接到棧橋的木板，重進城才出現（Tim 2026-10-31）
+  });
   ['piers', 'quay', 'stairs'].forEach(function (k) { changed(a[k], b[k], function (q) { deck = true; q.path.forEach(function (p) { grow(box, E(p), (q.w || 4) + 4); }); }); });   // 城區多了少了（townDistView）：那一區的地面重建（townDistBins）
   var c0 = a.clear || {}, c1 = b.clear || {};
   bag(c0.rings, c1.rings, function (R) { R.forEach(function (q) { grow(box, E(q), 4); }); });
