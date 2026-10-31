@@ -62,8 +62,16 @@
 //      地球儀上追上一支船隊、按「開打」⇒ 清單裡那一艘帶 foe ⇒ 排在最前面生（場上滿了 ⇒ 收掉最遠那一艘還沒敵對的表演船讓位，trafficRoom）、放上場就 trafficHostile；
 //      已經在場上的（清單早就給過）⇒ 收到清單就 trafficHostile ⇒ fightTick 換成 ⚔ 交戰，之後同 ⑪。
 //      照 foe 敵對過一次就記下（TRF.foeOnce）、之後不再照它：外面那一頁整趟都帶著 foe ⇒ 甩開 4 km 收掉之後，同一支照中立的生（⛔ 不記 ⇒ 一生出來又敵對、又進交戰）。
-// 讀數：__game.traffic() ⇒ { ships, queue, built, dropped, gap（⑩ 擋下幾次）, gapLast（最後一次：哪一艘、被誰擋、隔幾公尺）, stepMax, stepMs（每一段幾毫秒，最近 200 段）, place（放上場那一步）}
-var TRF = { want: {}, build: null, q: [], askT: 0, clockT: 0, built: 0, dropped: 0, gap: 0, gapLast: null, stepMax: 0, stepMs: [], place: [], skip: 0, foeOnce: {} };   // foeOnce：照 foe 敵對過的船隊 id（⑫）
+//   ⑬ 下水（Blocksail TASK-0899；Tim 2026-10-24「可以有下水演出(但先不急著做) 保留規格」，2026-10-31「899 GO」）：
+//      清單裡剛造好的船（launch：Blocksail 地球儀 trafficFor ⇐ world/fleet.js buildOne 記的 F.born）、這座城有水上版船廠、船台放得下這艘 ⇒ 不生在泊位，生在船台上（trafficLaunchPrep）：
+//      船頭朝陸、船尾朝水（史料：船尾先下水）；船頭停在船台口往回 TRF_LAUNCH.bow × 船台長那一點（那裡往陸上是模型雕的下一艘船骨架）、船尾伸出船台口也行（船台在水下接著斜下去）。
+//      演（trafficLaunchStep，照真實秒數、⛔ 不照世界時間的倍率）：停 hold 秒 ⇒ 沿船台滑下去（a ＝ g(sin θ − μ cos θ)）⇒ 浮起來那一刻船尾一大片水花 ⇒ 水的阻力慢慢停 ⇒ 交給 ⑧ 拖去泊位（停港的）、沒有泊位 ⇒ 原地繫著。
+//      在船台上：浮力照舊算（08_sea.js 照水面）、畫面多墊 sh.lnY（龍骨七點裡最低那一點貼著船台面，10_ship.js shipMatrix）、縱搖多 sh.lnP（＝ 船台的斜度）；浮的那一個位置比船台面高了 ⇒ 墊 0、斜度慢慢回 0 ⇒ 不跳。
+//      照時刻表滑、拖一樣不碰海床、棧橋（trafficKin）。挑船台：這座城水上的地塊、模型索引有 slip [長, 寬, 落差] 的，船身（hx0～hx1）≤ 長 ＋ TRF_LAUNCH.over、船寬 ≤ 寬 ⇒ 長度最小的那一座。
+//      演出（__game.townLaunch：不看帳，Blocksail 城鎮模式裡試）⇒ 一艘假的往來船（TRF.demo，清單換了也留著；演完停 TRF_LAUNCH.keep 秒才收）。
+// 讀數：__game.traffic() ⇒ { ships, queue, built, dropped, gap（⑩ 擋下幾次）, gapLast（最後一次：哪一艘、被誰擋、隔幾公尺）, stepMax, stepMs（每一段幾毫秒，最近 200 段）, place（放上場那一步）, launch（⑬ 最近一次）}
+var TRF = { want: {}, build: null, q: [], askT: 0, clockT: 0, built: 0, dropped: 0, gap: 0, gapLast: null, stepMax: 0, stepMs: [], place: [], skip: 0, foeOnce: {}, demo: {}, launch: null };   // foeOnce：照 foe 敵對過的船隊 id（⑫）；demo：⑬ 演出的假船；launch：⑬ 讀數
+var TRF_LAUNCH = { hold: 3, mu: 0.04, tau: 4, vEnd: 0.15, over: 4, bow: 0.55, splash: 0.3, keep: 30 };   // ⑬ 停幾秒、船台摩擦（上了油的滑道）、浮起來之後減速的時間常數、多慢算停、船身最多比船台長幾公尺、船頭停在船台的幾成、墊多低算浮起來（水花）、演完幾秒收（演出）〔設計〕
 var TRF_PIRATE_M = 2000;                                                 // ⑪ 海盜船離我艦幾公尺內就敵對（Tim 2026-10-28 選「靠近到一定距離」，數字之後再調）〔設計〕
 var TRF_GAP_M = 20;                                                    // ⑩ 生的時候龍骨線離場上每一艘至少幾公尺（collidePair 14 m 以內就算碰撞、硬推開 ⇒ 多留 6 m；泊位之間 30 m 上下的照樣生）〔設計〕
 var TRF_ASK_MS = 2000, TRF_SPAWN_M = 6000, TRF_STARVE = 30;   // 幾毫秒要一次清單、離我艦幾公尺內才生、背景預算連續幾格用光就照樣做一段（不然一直排不到）
@@ -99,7 +107,9 @@ function trafficGot(d) {
     pilot: o.pilot || null, entry: o.entry ? W(o.entry) : null,          // pilot、entry：航行管制（⑧）
     foe: !!o.foe && !TRF.foeOnce[o.id],                                 // foe：地球儀上「開打」的那一艘（⑫）；敵對過一次就不再照它（甩開了、收掉了 ⇒ 之後照中立的生，不然一生出來又打）
     lane: o.lane && o.lane.length > 1 ? o.lane.map(W) : null,          // lane：berth 那一格的入港航線（泊位 ⇒ 入口點；換格時沿著拖，⑧）
-    bat: o.bat ? W(o.bat) : null }; });                                 // bat：時刻表停的那一點跟 berth 不同（港外錨地：時刻表停在外海泊位、船停在自己那一格）
+    bat: o.bat ? W(o.bat) : null,                                       // bat：時刻表停的那一點跟 berth 不同（港外錨地：時刻表停在外海泊位、船停在自己那一格）
+    launch: !!o.launch }; });                                           // launch：剛造好的船（⑬）⇒ 生在船台上、滑下水
+  Object.keys(TRF.demo).forEach(function (id) { var w0 = TRF.demo[id]; if (w0.until != null && SIMT > w0.until) delete TRF.demo[id]; else if (!want[id]) want[id] = w0; });   // ⑬ 演出的假船：清單裡沒有也留著；演完停夠了 ⇒ 收
   Object.keys(want).forEach(function (id) { var w = want[id]; if ((w.dock || w.pilot) && w.berth && trafficDistOff(w.berth.x, w.berth.z)) delete want[id]; });   // 別的城區的泊位（沒建）⇒ 不生、生了的收掉
   TRF.want = want;
   trafficShips().forEach(function (sh) {                              // 還在 ⇒ 換航點；沒了 ⇒ 收
@@ -107,6 +117,7 @@ function trafficGot(d) {
     if (sh.npc.foe) { if (!w && isOut(sh) && MODE !== 'fight') trafficDrop(sh); return; }   // ⑪ 敵對的照海戰走、不照清單；打完了（沉、降旗）、清單也沒了 ⇒ 才收
     if (!w) { trafficDrop(sh); return; }
     if (w.foe) { TRF.foeOnce[w.id] = 1; trafficHostile(sh, '地球儀上開打'); return; }   // ⑫ 早就在場上 ⇒ 現在敵對
+    if (sh.npc.launch) { sh.npc.lane = w.lane; sh.npc.berth = trafficBerthFor(sh, w.berth); sh.npc.launch.dock = !!w.dock; return; }   // ⑬ 還在船台上、水裡滑 ⇒ 只記泊位，演完才照清單（拖去泊位）
     var was = !!sh.npc.dock, P0 = sh.npc.path, L0 = sh.npc.lane || null; sh.npc.lane = w.lane;
     var b0 = w.berth && w.bat ? { x: w.bat[0], z: w.bat[1], yaw: w.berth.yaw, id: w.berth.id } : w.berth;   // 時刻表的那一點（⑧ 補差的起點）
     sh.npc.to = w.to; sh.npc.v = w.v; sh.npc.path = w.path; sh.npc.trk = w.trk; if (!was || w.dock) sh.npc.berth0 = b0; sh.npc.berth = trafficBerthFor(sh, w.berth); sh.npc.entry = w.entry;
@@ -266,10 +277,11 @@ function trafficPilot(sh, p) {
   if (!p && o === 'out' && !n.dock) { trafficSails(sh, 2); sh.spd = Math.max(sh.spd, VMAX * TRF_V0); }
 }
 /** 照畫好的路線走（照時刻表滑、拖）⇒ 不擱淺、棧橋不推、海圖塊不等它（08_seabed.js、50_sim.js）。 */
-function trafficKin(sh) { return trafficGliding(sh) || !!(sh.npc && sh.npc.tow); }
+function trafficKin(sh) { return trafficGliding(sh) || !!(sh.npc && (sh.npc.tow || sh.npc.launch)); }   // ⑬ 下水也是照畫好的路線擺
 /** 31_sailing.js sailShip 開頭先問（滑之前）：拖（⑧）⇒ true（這一步照拖的路線擺，不照帆走）；開往這座城、離預約的泊位 TRF_IN_M 內 ⇒ 開始拖進去。 */
 function trafficTow(sh, dt) {
   var n = sh.npc; if (!n || n.foe) return false;                       // 敵對了（⑪）⇒ 不拖（⛔ 停港的被打 ⇒ 離泊位 TRF_IN_M 內又被拖回去）
+  if (n.launch) return trafficLaunchStep(sh, dt);                      // ⑬ 下水
   if (!n.tow) {
     var b = n.berth; if (n.dock || n.held || !b) return false;
     var c0 = shipCenter(sh), db = Math.hypot(b.x - c0[0], b.z - c0[2]);
@@ -287,7 +299,7 @@ function trafficTow(sh, dt) {
     if (T.kind === 'out') v = Math.min(TRF_TOW_V, T.v + 0.15 * dt);   // 出港：從停著慢慢拖起來
     else if (T.spun) v = clamp(left / 20, 0.3, TRF_BACK_V);             // 倒進去：最後 20 m 減速
     else v = toA < TRF_TURN_M ? Math.max(TRF_TOW_VMIN, TRF_TOW_V * toA / TRF_TURN_M) : T.sa < 0 && left < TRF_TURN_M ? Math.max(0.3, TRF_TOW_V * left / TRF_TURN_M) : TRF_TOW_V;
-    v = Math.max(TRF_HARB_V0, Math.min(v, vc)); T.v = v; T.s = Math.min(T.L, T.s + v * dt);
+    v = Math.max(TRF_HARB_V0, T.fast ? v : Math.min(v, vc)); T.v = v; T.s = Math.min(T.L, T.s + v * dt);   // fast：下水之後從船廠拖去泊位（⑬）
     if (T.sa >= 0 && !T.spun && T.s >= T.sa) {                         // 到了轉向那一點 ⇒ 原地轉、之後從這裡直線倒進泊位（⛔ 不照航道剩下的那一截：入港航線 32 m 一格，泊位前那幾公尺是鋸齒 ⇒ 在格子裡側滑）
       var k0 = 1; while (k0 < A.length - 1 && T.cum[k0] < T.sa) k0++;
       var g0 = A[k0 - 1], g1 = A[k0], sg = T.cum[k0] - T.cum[k0 - 1], ug = sg > 1e-6 ? (T.sa - T.cum[k0 - 1]) / sg : 1, P = [g0[0] + (g1[0] - g0[0]) * ug, g0[1] + (g1[1] - g0[1]) * ug], E = A[A.length - 1], dE = Math.hypot(E[0] - P[0], E[1] - P[1]);
@@ -450,9 +462,11 @@ function trafficPump(t1) {
       var id = TRF.q[0], w = TRF.want[id]; if (!w) { TRF.q.shift(); continue; }
       if (!HULLT[w.hull]) { loadHull(w.hull); break; }                    // 還在載（loadHull 自己分段讓出、同一型只載一次）⇒ 下一格再看
       TRF.q.shift();
+      if (w.launch && !w.lp) trafficLaunchPrep(w, HULLT[w.hull]);        // ⑬ 船型到了才量得出船身 ⇒ 挑船台、生的位置改成船台上（放不下 ⇒ 照舊生在泊位）
+      if (w.demo && !w.lp) { delete TRF.demo[id]; delete TRF.want[id]; continue; }   // ⑬ 演出的假船沒有船台放 ⇒ 不生（at 是我艦那一點）；原因在 TRF.launch.err
       var gh = trafficGapHit(HULLT[w.hull], w.at[0], w.at[1], trafficYaw(w.hdg)); if (gh) { trafficGapNote(w, gh, 'queue'); continue; }   // ⑩ 那裡有船 ⇒ 這一輪不生（下一次要清單再排）
       var M = makeShipSteps(SHIPS.length, 'blue', trafficYaw(w.hdg), w.at[1], HULLT[w.hull], w.at[0]);
-      TRF.build = { id: id, M: M, steps: M.steps.slice(), t0: now };
+      TRF.build = { id: id, M: M, steps: M.steps.slice(), t0: now, lp: w.lp || null };   // lp：⑬ 船台（清單每次換一份 ⇒ 跟著這一艘走）
       break;
     }
   }
@@ -478,6 +492,7 @@ function trafficPlace(B) {
   if (w.flag) shipNation(sh, w.flag);                                    // 掛船隊主人那一國的旗（77_colours.js；外面那一頁給預設旗的 key，不認得 ⇒ 照陣營旗）
   coreSpawned(sh, null); stepShip(sh, 0); survey(sh); pickCaptain(sh); cmdTick(); pickFoes();
   sh.npc.berth = trafficBerthFor(sh, w.berth);                          // 船放上場、有了 M（船寬）才貼平台
+  if (B.lp) { trafficLaunchStart(sh, B.lp, !!w.dock); TRF.built++; return; }   // ⑬ 生在船台上 ⇒ 滑下水，演完才照清單（拖去泊位）
   if (!w.dock && (w.path || w.v > 0)) sh.spd = w.path ? VMAX * TRF_V0 : Math.min(w.v, VMAX);   // 照船隊的航速開出來（⛔ 從 0 起步 ⇒ 生出來那幾十秒停在海上）；沿航道的照自己的帆
   if (w.dock) trafficDock(sh, true);                                     // 停港的：生在泊位上（at ＝ 泊位）⇒ 下錨、繫上
   else if (w.pilot) trafficSails(sh, 0);                                 // 生在港內、照時刻表帶著走的（⑧）⇒ 帆收著
@@ -485,12 +500,98 @@ function trafficPlace(B) {
   if (w.foe) { TRF.foeOnce[w.id] = 1; trafficHostile(sh, '地球儀上開打'); }   // ⑫ 生出來就敵對
   TRF.built++;
 }
+/** ⑬ 船台的面在地塊座標 a（沿 rot，正面 ＋d/2）那一點多高：船台頂（aTop）往陸上是平台面、往水裡照斜度一直下去（船台口以外在水下接著斜）。 */
+function trafficSlipY(lp, a) { return lp.top - lp.drop * Math.max(0, lp.aTop - a) / lp.len; }
+/** ⑬ 挑船台（見檔頭 ⑬）：w ＝ 清單那一艘、T ＝ 船型 ⇒ w.lp ＝ { town, lot, O（地塊中心，世界 [x, z]）, ua（+a 的單位向量）, aTop, aMouth, len, drop, top, th（斜度 rad）, c0（船中心起點的 a）}、
+ *  w.at、w.hdg 改成船台上；放不下、這附近沒有水上船廠 ⇒ w.launch ＝ false（照舊生在泊位）。 */
+function trafficLaunchPrep(w, T) {
+  if (T.wl0 == null) waterline(T);
+  var K = TOWNS.kit, G = T.base, xm = Math.round((T.wl0 + T.wl1) / 2), lo = 1e9, hi = -1, y, me = SHIPS[PLAYER_I], c = me ? shipCenter(me) : [0, 0, 0], best = null;
+  for (y = 0; y < G.sy; y++) if (G.get(xm, y, T.zw)) { if (y < lo) lo = y; if (y > hi) hi = y; }
+  var Lw = (T.wl1 - T.wl0) * S, Bw = hi >= lo ? (hi - lo + 1) * S : 0;   // 水線長、船中央水線的寬
+  TOWNS.list.forEach(function (Tn) {
+    (Tn.p && Tn.p.lots || []).forEach(function (l) {
+      if (!l.water || !l.water.slip) return;
+      var q = townRiseInst(Tn, l.id), m = q && q.nb && K && K.M[q.k] && K.M[q.k].m, sl = m && m.slip; if (!sl || !(sl[0] > 0)) return;   // 水上版的模型、索引有船台
+      if (Lw > sl[0] + TRF_LAUNCH.over || Bw > sl[1]) return;
+      var th = l.rot * Math.PI / 180, e0 = Tn.E(l.at), e1 = Tn.E([l.at[0] + Math.cos(th), l.at[1] + Math.sin(th)]), O = [e0[0] - BED.ax, e0[1] - BED.az], ua = [e1[0] - e0[0], e1[1] - e0[1]], ul = Math.hypot(ua[0], ua[1]) || 1;
+      ua = [ua[0] / ul, ua[1] / ul];
+      if (Math.hypot(O[0] - c[0], O[1] - c[2]) > TRF_SPAWN_M) return;
+      if (best && best.len <= sl[0]) return;                              // 長度最小、放得下的那一座
+      var aM = -l.d / 2, aB = aM + TRF_LAUNCH.bow * sl[0];               // 船台口在背面；船頭停在往回 bow × 長那一點
+      best = { town: Tn.id, lot: l.id, O: O, ua: ua, aTop: aM + sl[0], aMouth: aM, len: sl[0], drop: sl[2], top: l.h, th: Math.atan2(sl[2], sl[0]), c0: aB + (T.cx - T.wl1) * S, Lw: Lw, Bw: Bw };
+    });
+  });
+  if (!best) { w.launch = false; TRF.launch = { id: w.id, hull: w.hull, err: '這附近沒有放得下這艘的水上船廠（水線長 ' + Lw.toFixed(1) + ' m、寬 ' + Bw.toFixed(1) + ' m）' }; return; }
+  w.lp = best; w.at = [best.O[0] + best.ua[0] * best.c0, best.O[1] + best.ua[1] * best.c0];
+  var yaw = Math.atan2(-best.ua[1], best.ua[0]); w.hdg = (Math.PI / 2 - yaw) * 57.2958;   // 船頭朝陸（+a）；trafficYaw 倒過來
+}
+/** ⑬ 放上場：船中心擺到船台上、停 hold 秒（trafficLaunchStep 接著演）。dock ＝ 清單說它停港（演完拖去泊位）。 */
+function trafficLaunchStart(sh, lp, dock) {
+  var n = sh.npc;
+  n.launch = { lp: lp, ph: 'hold', t: 0, s: 0, v: 0, dock: dock }; n.dock = false; n.held = false; n.tow = null; sh.moor = null;
+  if (sh.anc) { anchorToggle(sh, 'P', false); anchorToggle(sh, 'S', false); }
+  trafficSails(sh, 0); sh.spd = 0; sh.vel = [0, 0, 0]; sh.yawRate = 0; sh.yaw = Math.atan2(-lp.ua[1], lp.ua[0]); sh.lnY = 0; sh.lnP = lp.th;
+  trafficLaunchPut(sh); shipPose(sh); trafficLaunchSit(sh); shipPose(sh); trafficLaunchSit(sh); shipPose(sh);   // 第一步之前就坐在船台上（⛔ 不然生出來那一格泡在水裡）
+  TRF.launch = { id: n.id, hull: sh.T.id, town: lp.town, lot: lp.lot, ph: 'hold', t0: SIMT, len: lp.len, th: +(lp.th * 57.2958).toFixed(2), Lw: +lp.Lw.toFixed(1), Bw: +lp.Bw.toFixed(1), splash: null, end: null };
+}
+/** ⑬ 船中心照走了多遠（s，往水裡）擺上去。 */
+function trafficLaunchPut(sh) {
+  var L = sh.npc.launch, lp = L.lp, a = lp.c0 - L.s, c = shipCenter(sh);
+  sh.px += lp.O[0] + lp.ua[0] * a - c[0]; sh.pz += lp.O[1] + lp.ua[1] * a - c[2];
+}
+/** ⑬ 墊高（照上一次的矩陣）：龍骨七點（32_ground.js groundKeel）裡離船台面最低的那一點貼上去 ⇒ sh.lnY；浮的位置已經比船台高 ⇒ 0。縱搖照墊多少從船台的斜度回到 0。⇒ 墊了多少。 */
+function trafficLaunchSit(sh) {
+  var lp = sh.npc.launch.lp, K = groundKeel(sh.T), d = -Infinity;
+  for (var k = 0; k < K.length; k++) { var p = M4.pt(sh.M, K[k][0], sh.T.cy, K[k][1]), a = (p[0] - lp.O[0]) * lp.ua[0] + (p[2] - lp.O[1]) * lp.ua[1]; d = Math.max(d, trafficSlipY(lp, a) - p[1]); }
+  sh.lnY = Math.max(0, (sh.lnY || 0) + d); sh.lnP = lp.th * clamp(sh.lnY / 0.4, 0, 1);
+  return sh.lnY;
+}
+/** ⑬ 一步（31_sailing.js ⇐ trafficTow）：停、滑、浮起來減速、演完 ⇒ 交給 ⑧（停港的拖去泊位）或原地繫著。⇒ true（這一步的位置是它擺的）。 */
+function trafficLaunchStep(sh, dt) {
+  var n = sh.npc, L = n.launch, lp = L.lp, R = TRF.launch && TRF.launch.id === n.id ? TRF.launch : {};
+  if (sh.sunk) { n.launch = null; sh.lnY = sh.lnP = 0; return false; }
+  L.t += dt;
+  if (L.ph === 'hold' && L.t >= TRF_LAUNCH.hold) L.ph = 'slide';
+  if (L.ph === 'slide') L.v += 9.81 * (Math.sin(lp.th) - TRF_LAUNCH.mu * Math.cos(lp.th)) * dt;   // 上了油的滑道
+  else if (L.ph === 'glide') L.v *= Math.exp(-dt / TRF_LAUNCH.tau);                                // 水的阻力
+  L.s += L.v * dt; trafficLaunchPut(sh);
+  var y = trafficLaunchSit(sh);
+  if (L.ph === 'slide' && y <= 0) {                                      // 浮起來了 ⇒ 船尾一大片水花（13_water.js wpSplash）
+    L.ph = 'glide'; var K = groundKeel(sh.T), p = M4.pt(sh.M, K[0][0], sh.T.cy, K[0][1]);
+    if (typeof wpSplash === 'function') { wpSplash(p, true); wpSplash([p[0] + lp.ua[0] * 4, p[1], p[2] + lp.ua[1] * 4], true); }
+    R.splash = { t: +(SIMT - R.t0).toFixed(2), v: +L.v.toFixed(2), s: +L.s.toFixed(1) };
+  }
+  sh.yawRate = 0; sh.spd = -L.v; sh.vel = [-lp.ua[0] * L.v, 0, -lp.ua[1] * L.v];   // 倒著走（船尾先下水）⇒ 航速是負的（航跡、水花照它）
+  R.ph = L.ph; R.s = +L.s.toFixed(2); R.v = +L.v.toFixed(2); R.lnY = +y.toFixed(3); R.vMax = Math.max(R.vMax || 0, +L.v.toFixed(2));
+  if (L.ph === 'glide' && L.v < TRF_LAUNCH.vEnd) {                       // 停了 ⇒ 交出去
+    n.launch = null; sh.lnY = sh.lnP = 0; sh.spd = 0; sh.vel = [0, 0, 0]; R.end = { t: +(SIMT - R.t0).toFixed(2), s: +L.s.toFixed(1) };
+    if (L.dock && n.berth) {                                             // 停港的 ⇒ ⑧ 拖去泊位、到了下錨：沿那一格的入港航線（烘的時候避開了棧橋；泊位 ⇒ 入口 ⇒ 倒過來）從最近那一點接上
+      trafficTowIn(sh, n.lane ? n.lane.slice().reverse() : null); n.dock = true; R.to = 'berth';
+      if (n.tow) n.tow.fast = true;                                      // 照拖的航速（⛔ 不照港內同步的曲線：那是從泊位起步、照時刻表的，從船廠拖 500 m 要半小時）
+    }
+    else { var c = shipCenter(sh); n.held = true; sh.moor = { x: c[0], z: c[2], yaw: sh.yaw }; R.to = 'here'; }
+    if (TRF.demo[n.id]) TRF.demo[n.id].until = SIMT + TRF_LAUNCH.keep;   // 演出：停一下再收
+  }
+  return true;
+}
+/** ⑬ 演出（__game.townLaunch）：不看帳，生一艘假的往來船在附近放得下的船台上 ⇒ { ok, id } ｜ { ok: false, why }。hull 沒給 ⇒ 燕子號（英國 ketch，水線約 17 m：小船廠、大船廠都放得下）。 */
+function trafficLaunchDemo(hull) {
+  if (!trafficOk()) return { ok: false, why: '要在 Blocksail 的航海、城鎮模式裡（外面那一頁給往來的船）' };
+  hull = hull || 'swallow';
+  if (!HULL_LIST.some(function (h) { return h.id === hull; })) return { ok: false, why: '沒有這一型：' + hull };
+  var me = SHIPS[PLAYER_I], c = me ? shipCenter(me) : [0, 0, 0], id = 'launch-demo-' + (TRF.demoN = (TRF.demoN || 0) + 1);
+  var w = { id: id, kind: 'merchant', hull: hull, name: '新船（下水演出）', at: [c[0], c[2]], hdg: 0, to: null, v: 0, path: null, trk: null, berth: null, pilot: null, entry: null, foe: false, lane: null, bat: null, launch: true, dock: false, demo: true };
+  TRF.demo[id] = w; TRF.want[id] = w; TRF.q.unshift(id);
+  return { ok: true, id: id };
+}
+
 /** 讀數（__game.traffic）。 */
 function trafficInfo() {
   var me = SHIPS[PLAYER_I], c = me ? shipCenter(me) : [0, 0, 0];
   return { ok: trafficOk(), rate: wclkRate(), wh: +(worldSec() / 3600).toFixed(4), max: trafficMax(), want: Object.keys(TRF.want).length, queue: TRF.q.slice(), building: TRF.build ? TRF.build.id : null, built: TRF.built, dropped: TRF.dropped, gap: TRF.gap, gapLast: TRF.gapLast,
     stepMax: +TRF.stepMax.toFixed(2), stepMs: TRF.stepMs.slice(), place: TRF.place.slice(),
-    hold: trafficPortN(), foeOnce: Object.keys(TRF.foeOnce),
+    hold: trafficPortN(), foeOnce: Object.keys(TRF.foeOnce), launch: TRF.launch, demo: Object.keys(TRF.demo),   // launch：⑬ 最近一次下水
     ships: trafficShips().map(function (s) { var n = s.npc, T = n.tow, b = n.berth, sc = shipCenter(s); return { i: s.i, id: n.id, kind: n.kind, hull: s.T.id, x: +s.px.toFixed(1), z: +s.pz.toFixed(1), d: Math.round(Math.hypot(s.px - c[0], s.pz - c[2])), spd: +s.spd.toFixed(2), yaw: +s.yaw.toFixed(3), team: s.team, foe: !!n.foe, dock: n.dock, held: !!n.held, to: n.to, path: n.path ? n.path.length : 0, trk: n.trk ? n.trk.length : 0, pilot: n.pilot || null, glide: trafficGliding(s), real: !!n.real,
       berth: b ? { x: +b.x.toFixed(1), z: +b.z.toFixed(1), yaw: +b.yaw.toFixed(3), d: +Math.hypot(b.x - sc[0], b.z - sc[2]).toFixed(1) } : null, tow: T ? { kind: T.kind, s: +T.s.toFixed(1), L: +T.L.toFixed(1), spin: T.spin, spun: T.spun, v: +T.v.toFixed(2), t: +(SIMT - T.t0).toFixed(1) } : null }; }) };
 }

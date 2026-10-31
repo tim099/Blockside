@@ -7,9 +7,9 @@ function shipBaseMatrix(T) {
   return new Float32Array([S, 0, 0, 0, 0, 0, S, 0, 0, S, 0, 0, -S * T.cx, -S * T.zw, -S * T.cy, 1]);
 }
 function shipMatrix(sh) {
-  var m = trans(sh.px, -sh.sink + sh.lift + (sh.wl || 0) + sh.bob, sh.pz);   // wl：船底的平均水面、bob：船身相對它的起伏（08_sea.js）
+  var m = trans(sh.px, -sh.sink + sh.lift + (sh.wl || 0) + sh.bob + (sh.lnY || 0), sh.pz);   // wl：船底的平均水面、bob：船身相對它的起伏（08_sea.js）；lnY：下水時墊在船台上多高（58_traffic.js ⑬，只給畫面、浮力照舊）
   m = M4.mul(m, rotM([0, 1, 0], sh.yaw));
-  m = M4.mul(m, rotM([0, 0, 1], sh.pitchA + (sh.pitchW || 0)));
+  m = M4.mul(m, rotM([0, 0, 1], sh.pitchA + (sh.pitchW || 0) + (sh.lnP || 0)));   // lnP：在船台上照船台的斜度（同上）
   m = M4.mul(m, rotM([1, 0, 0], sh.rollA + (sh.rollW || 0)));
   return M4.mul(m, shipBaseMatrix(sh.T));
 }
